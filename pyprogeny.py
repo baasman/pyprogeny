@@ -6,19 +6,13 @@ This is a temporary script file.
 """
 
 from sklearn.cluster import KMeans
-from 
-import fastcluster
 import pandas as pd
 import numpy as np
 
 data = pd.DataFrame({'v1': np.random.randint(1,1000,100000),
                      'v2': np.random.randint(1,1000,100000)})
 
-data = pd.DataFrame(load_iris().data)
-
-
-
-
+data = pd.read_csv("/Users/baasman/Documents/misc.Datasets/ptest.csv")
 
 def prog_km(data, n_cluster):
     """ Default kmeans algorithm from sklearn.cluster.KMeans"""
@@ -86,6 +80,7 @@ def _gap_method(scores, n_cluster):
     def consec_list(n_cluster):
         a = [i for i in sorted(set(n_cluster))]
         return (len(a) == (a[-1]-a[0]+1))
+        
     if consec_list(n_cluster):
         pass
     else:
@@ -146,6 +141,14 @@ class Progeny:
                                              'cluster_algorithm': self.cluster_algorithm,
                                              'method': self.method,
                                              'score_invert': self.score_invert}))
-    def fit(self, data, repeats=1)
+    def fit(self, data, repeats=1):
+        scorem = pd.DataFrame(columns=p.n_cluster)
+        for rep in range(repeats):
+            _p = _progeny(data, p.cluster_algorithm, p.score_invert,
+                          p.n_cluster)
+            scorem.loc[rep] = _p[0]
+            
+            
+        
         
         
