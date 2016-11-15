@@ -96,24 +96,38 @@ class Progeny:
     ----------
 
     n_cluster: int, required
-        The range of clusters you want to test. Can either be a range or list.
+        The range of clusters to iterate over. Can either be a range or list.
         For the gap method, it requires a continuous sequence of integers.
 
     method: str, required
         Can be either 'gap', 'score', or 'both'.
 
     cluster_algorithm: function, default: kmeans
-        The clustering algorithm the progeny function will use.
+        The clustering algorithm the progeny algorithm will use.
+
+    ext_cluster_algorithm: function, default: kmeans
+        The clustering algorithm the progeny algorithm will use.
 
     score_invert: bool, default: False
-        Determines whether score is inverted or not.
+        Determines whether score is inverted or not. If False, each score is
+        the result of the true classification over false classification.
+
+    repeats: int, default: 1
+        How often to repeat progeny function when computing scores. If greater than 1,
+        will return a multidimensional scores table.
+
+    nrandom: int, default: None
+        Only used when using method 'score'. This integer specifies how many random
+        datasets are generated to use in computing mean and std score per cluster.
 
     """
 
     def __init__(self, n_cluster, method='gap', cluster_algorithm=prog_km,
-                 repeats=1, iteration=100, size=10, score_invert=False, nrandom=10):
+                 ext_cluster_algorithm=None, repeats=1, iteration=100, size=10, score_invert=False,
+                 nrandom=10):
         self.n_cluster = n_cluster
         self.cluster_algorithm = cluster_algorithm
+        self.ext_cluster_algorithm = ext_cluster_algorithm
         self.method = method
         self.score_invert = score_invert
         self.repeats = repeats
@@ -133,16 +147,22 @@ class Progeny:
                                              'method': self.method,
                                              'score_invert': self.score_invert}))
 
-    def fit(self, data):
+    def fit(self, X):
+        """Compute the stability scores for each cluster in the given range.
+
+        Parameters
+        ----------
+        X : array-like matrix, or pandas dataframe.
+        """
         scorem = pd.DataFrame(columns=self.n_cluster)
         for rep in range(self.repeats):
-            _p = _progeny(data, cluster_alg=self.cluster_algorithm, score_invert=self.score_invert,
+            _p = _progeny(X, cluster_alg=self.cluster_algorithm, score_invert=self.score_invert,
                           n_cluster=self.n_cluster, iteration = self.iteration)
             scorem.loc[rep] = _p[0]
         self.scores = scorem
         return scorem
 
-    def score(self, data=None):
+    def score(self, X=None):
         assert self.scores is not None, "Run 'fit' first on the data " \
                                         "before computing %s score" % self.method
 
@@ -154,17 +174,18 @@ class Progeny:
             self.mean_gap = np.mean(gaps, axis=0)
             self.sd_gap = np.std(gaps, axis=0)
         elif self.method == 'score':
-            assert data is not None, "To use the score method, you must the data"
-            assert isinstance(data, np.ndarray)
-            assert self.nrandom is not None and self.nrandom > 0
+            assert X is not None, "To use the score method, you must the data"
+            assert isinstance(X, np.ndarray)
+            assert self.nrandom is not None
+            assert self.nrandom > 0
             r_score = np.zeros((p.nrandom, len(self.n_cluster)))
             for r in range(self.nrandom):
-                r_data = np.zeros(data.shape)
+                r_data = np.zeros(X.shape)
                 for col in range(r_data.shape[1]):
-                    r_data[:, col] = np.random.uniform(np.min(data[:, col]),
-                                                       np.max(data[:, col]),
+                    r_data[:, col] = np.random.uniform(np.min(X[:, col]),
+                                                       np.max(X[:, col]),
                                                        r_data.shape[0])
-                r_score[r, :] = _progeny(data, self.cluster_algorithm, self.cluster_algorithm,
+                r_score[r, :] = _progeny(r_data, self.cluster_algorithm, self.cluster_algorithm,
                                          self.score_invert, self.n_cluster, self.size,
                                          self.iteration)[0]
             self.mean_score = np.mean(r_score, axis=0)
@@ -205,7 +226,7 @@ class Progeny:
         elif self.method == 'score':
             return _optimal_score(self.mean_score, self.score_invert,
                                   self.n_cluster)
-        elif self.method == 'both':
+        else:
             best_gap = _optimal_gap(self.mean_gap, self.score_invert,
                                     self.n_cluster)
             best_score = _optimal_score(self.mean_score, self.score_invert, self.n_cluster)
@@ -215,11 +236,9 @@ class Progeny:
 if __name__ == '__main__':
     # example code
     from sklearn.datasets import load_iris
-
     data = load_iris().data
-    p = Progeny(n_cluster=range(2, 6), cluster_algorithm=prog_km, method='score',
+    p = Progeny(n_cluster=range(2, 6), cluster_algorithm=prog_km, method='both',
                 score_invert=False, repeats=1, nrandom=5)
     p.fit(data)
     p.score(data)
-    p.get_optimal()
-
+    print(p.get_optimal())
