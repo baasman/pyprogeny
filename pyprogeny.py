@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from itertools import product
 
 
 def prog_km(X, n_cluster):
@@ -40,7 +41,7 @@ def _progeny(X, cluster_alg, ext_cluster_alg=None,
                     bottom = (lab - 1) * size
                     top = lab * size
                     bools = cluster_assignments[:, k] == index
-                    if isinstance(X, pd.core.frame.DataFrame):
+                    if isinstance(X, pd.DataFrame):
                         progeny[bottom:top, col] = np.random.choice(X[[col]]
                                                                     .iloc[bools].values
                                                                     .flatten(), size, replace=True)
@@ -48,10 +49,11 @@ def _progeny(X, cluster_alg, ext_cluster_alg=None,
                         progeny[bottom:top, col] = np.random.choice(X[bools, col], size, replace=True)
 
             pcluster = cluster_alg(progeny, clusters)
-            for i in range(size * clusters):
-                for j in range(size * clusters):
-                    if pcluster[i] == pcluster[j]:
-                        prob_matrix[i, j] += 1
+
+            for i, j in product(range(size * clusters), range(size * clusters)):
+                if pcluster[i] == pcluster[j]:
+                    prob_matrix[i, j] += 1
+
         prob_matrix /= iteration
 
         true_prob = 0
@@ -135,7 +137,7 @@ class Progeny:
     >>> import numpy as np
     >>> X = np.array([[1, 2], [1, 4], [1, 0],
     ...               [4, 2], [4, 4], [4, 0]])
-    >>> progeny = Progeny(n_cluster=range(2,5), method='score', cluster_algorithm=prog_km,
+    >>> progeny = Progeny(n_cluster=range(2,6), method='score', cluster_algorithm=prog_km,
     ...                   repeats=1)
     >>> progeny.fit(X)
     >>> progeny.score(X)
@@ -165,11 +167,16 @@ class Progeny:
         return '%s: %s' % (class_name, repr({'n_cluster': self.n_cluster,
                                              'cluster_algorithm': self.cluster_algorithm,
                                              'method': self.method,
-                                             'score_invert': self.score_invert}))
+                                             'score_invert': self.score_invert,
+                                             'repeats': self.repeats,
+                                             'iteration': self.iteration,
+                                             'size': self.size,
+                                             'nrandom': self.nrandom}))
 
     # noinspection PyPep8Naming
     def fit(self, X):
         """Compute the stability scores for each cluster in the given range.
+
         Parameters
         ----------
         X : array-like matrix, or pandas dataframe.
@@ -216,18 +223,18 @@ class Progeny:
             assert isinstance(X, np.ndarray)
             assert self.nrandom is not None
             assert self.nrandom > 0, "Must use a positive integer for nrandom"
-            r_score = np.zeros((p.nrandom, len(self.n_cluster)))
+            random_score = np.zeros((p.nrandom, len(self.n_cluster)))
             for r in range(self.nrandom):
-                r_X = np.zeros(X.shape)
-                for col in range(r_X.shape[1]):
-                    r_X[:, col] = np.random.uniform(np.min(X[:, col]),
-                                                    np.max(X[:, col]),
-                                                    r_X.shape[0])
-                r_score[r, :] = _progeny(r_X, self.cluster_algorithm, self.cluster_algorithm,
-                                         self.score_invert, self.n_cluster, self.size,
-                                         self.iteration)[0]
-            self.mean_score = np.mean(r_score, axis=0)
-            self.sd_score = np.mean(r_score, axis=0)
+                random_X = np.zeros(X.shape)
+                for col in range(random_X.shape[1]):
+                    random_X[:, col] = np.random.uniform(np.min(X[:, col]),
+                                                         np.max(X[:, col]),
+                                                         random_X.shape[0])
+                random_score[r, :] = _progeny(random_X, self.cluster_algorithm, self.cluster_algorithm,
+                                              self.score_invert, self.n_cluster, self.size,
+                                              self.iteration)[0]
+            self.mean_score = np.mean(random_score, axis=0)
+            self.sd_score = np.mean(random_score, axis=0)
             if self.method != 'both':
                 return self.mean_score, self.sd_score
 
@@ -259,12 +266,13 @@ class Progeny:
         return [agg_score(scores, i) for i in range(scores.shape[0] - 2)]
 
     def get_optimal(self):
-        """Return optimal number of clusters as integer based on method specified
+        """Return optimal number of clusters from the range as integer based on method specified.
 
         Returns
         -------
-        If method == 'both', this function will return a tuple specifying the
-        optimal cluster based on gap, then score.
+        Integer
+            If method == 'both', this function will return a tuple specifying the
+            optimal cluster based on 'gap', then 'score'.
 
         """
 
