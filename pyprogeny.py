@@ -2,6 +2,21 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from itertools import product
+from scipy.cluster.hierarchy import fcluster
+import sys
+
+try:
+    from fastcluster import linkage
+except ImportError:
+    sys.stderr.write('Warning: Could not find module "fastcluster". The linkage function'
+                     'from scipy.cluster.hierarchy will be used instead')
+    from scipy.cluster.hierarchy import linkage
+
+
+def prog_linkage(X, n_cluster):
+    hclust = linkage(X, method='single')
+    labels = fcluster(hclust, t=n_cluster, criterion="maxclust")
+    return labels - 1
 
 
 def prog_km(X, n_cluster):
@@ -10,25 +25,20 @@ def prog_km(X, n_cluster):
     return kmeans.labels_
 
 
-def _progeny(X, cluster_alg, ext_cluster_alg=None,
-             score_invert=False, n_cluster=range(2, 8), size=10, iteration=100):
+def _progeny(X, cluster_algorithm, score_invert=False, n_cluster=range(2, 8), size=10,
+             iteration=100):
     """ Performs progeny algorithm, and calculates the score for each number of
     clusters
     """
-
-    if ext_cluster_alg is not None:
-        assert callable(ext_cluster_alg)
-        cluster_alg = ext_cluster_alg
 
     len_n_cluster = len(n_cluster)
     cluster_assignments = np.zeros((X.shape[0], len_n_cluster))
     stability_scores = np.zeros(len_n_cluster)
 
     for k in range(len_n_cluster):
-
         clusters = n_cluster[k]
 
-        labels = cluster_alg(X, clusters)
+        labels = cluster_algorithm(X, clusters)
         cluster_assignments[:, k] = labels
 
         prob_size = size * clusters
@@ -48,9 +58,10 @@ def _progeny(X, cluster_alg, ext_cluster_alg=None,
                     elif isinstance(X, np.ndarray):
                         progeny[bottom:top, col] = np.random.choice(X[bools, col], size, replace=True)
 
-            pcluster = cluster_alg(progeny, clusters)
+            pcluster = cluster_algorithm(progeny, clusters)
 
-            for i, j in product(range(size * clusters), range(size * clusters)):
+            _range = range(prob_size)
+            for i, j in product(_range, _range):
                 if pcluster[i] == pcluster[j]:
                     prob_matrix[i, j] += 1
 
@@ -137,7 +148,7 @@ class Progeny:
     >>> import numpy as np
     >>> X = np.array([[1, 2], [1, 4], [1, 0],
     ...               [4, 2], [4, 4], [4, 0]])
-    >>> progeny = Progeny(n_cluster=range(2,6), method='score', cluster_algorithm=prog_km,
+    >>> progeny = Progeny(n_cluster=range(2,6), method='score', cluster_algorithm=prog_linkage,
     ...                   repeats=1)
     >>> progeny.fit(X)
     >>> progeny.score(X)
@@ -145,11 +156,10 @@ class Progeny:
     """
 
     def __init__(self, n_cluster, method='gap', cluster_algorithm=prog_km,
-                 ext_cluster_algorithm=None, repeats=1, iteration=100, size=10, score_invert=False,
+                 repeats=1, iteration=100, size=10, score_invert=False,
                  nrandom=10):
         self.n_cluster = n_cluster
         self.cluster_algorithm = cluster_algorithm
-        self.ext_cluster_algorithm = ext_cluster_algorithm
         self.method = method
         self.score_invert = score_invert
         self.repeats = repeats
@@ -187,7 +197,7 @@ class Progeny:
         """
         scorem = pd.DataFrame(columns=self.n_cluster)
         for rep in range(self.repeats):
-            _p = _progeny(X, cluster_alg=self.cluster_algorithm, score_invert=self.score_invert,
+            _p = _progeny(X, cluster_algorithm=self.cluster_algorithm, score_invert=self.score_invert,
                           n_cluster=self.n_cluster, iteration=self.iteration)
             scorem.loc[rep] = _p[0]
         self.scores = scorem
@@ -210,12 +220,13 @@ class Progeny:
                                         "before computing %s score" % self.method
 
         if self.method == 'gap' or self.method == 'both':
-            gaps = np.zeros((p.repeats, self.scores.shape[1] - 2))
+            gaps = np.zeros((self.repeats, self.scores.shape[1] - 2))
             for r in range(self.repeats):
                 scores = self.scores.iloc[r].values
                 gaps[r, :] = self._gap_method(scores, self.n_cluster)
             self.mean_gap = np.mean(gaps, axis=0)
             self.sd_gap = np.std(gaps, axis=0)
+            print(self.sd_gap)
             if self.method != 'both':
                 return self.mean_gap, self.sd_score
         if self.method == 'score' or self.method == 'both':
@@ -223,14 +234,14 @@ class Progeny:
             assert isinstance(X, np.ndarray)
             assert self.nrandom is not None
             assert self.nrandom > 0, "Must use a positive integer for nrandom"
-            random_score = np.zeros((p.nrandom, len(self.n_cluster)))
+            random_score = np.zeros((self.nrandom, len(self.n_cluster)))
             for r in range(self.nrandom):
                 random_X = np.zeros(X.shape)
                 for col in range(random_X.shape[1]):
                     random_X[:, col] = np.random.uniform(np.min(X[:, col]),
                                                          np.max(X[:, col]),
                                                          random_X.shape[0])
-                random_score[r, :] = _progeny(random_X, self.cluster_algorithm, self.cluster_algorithm,
+                random_score[r, :] = _progeny(random_X, self.cluster_algorithm,
                                               self.score_invert, self.n_cluster, self.size,
                                               self.iteration)[0]
             self.mean_score = np.mean(random_score, axis=0)
@@ -276,13 +287,12 @@ class Progeny:
 
         """
 
-        assert self.mean_gap is not None or \
-               self.mean_score is not None, "Run 'score' first to compute a score"
-
         if self.method == 'gap':
+            assert self.mean_gap is not None, "Run 'score' first to compute a score"
             return _optimal_gap(self.mean_gap, self.score_invert,
                                 self.n_cluster)
         if self.method == 'score':
+            assert self.mean_score is not None, "Run 'score' first to compute a score"
             return _optimal_score(self.mean_score, self.score_invert,
                                   self.n_cluster)
         if self.method == 'both':
@@ -295,10 +305,12 @@ class Progeny:
 if __name__ == '__main__':
     # example code
     from sklearn.datasets import load_iris
+    from pyprogeny import Progeny, prog_linkage
     data = load_iris().data
-    p = Progeny(n_cluster=range(2, 6), cluster_algorithm=prog_km, method='score',
-                score_invert=False, repeats=1, nrandom=5)
+    p = Progeny(n_cluster=range(2, 10), cluster_algorithm=prog_linkage, method='score',
+                score_invert=False, repeats=3, nrandom=5)
     p.fit(data)
     p.score(data)
-    print(p.mean_score)
+    print(p.scores)
+    print(p.mean_gap)
     print("Optimal clusters in data: %d" % p.get_optimal())
